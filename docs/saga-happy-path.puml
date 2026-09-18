@@ -1,0 +1,28 @@
+@startuml
+autonumber
+
+actor "Клиент" as client
+participant "Order Service" as order
+participant "order-events" as t_order
+participant "Saga Orchestrator" as orch
+participant "saga-events" as t_saga
+participant "Payment Service" as pay
+participant "payment-events" as t_pay
+participant "reserve-inventory-command" as t_rescmd
+participant "Inventory Service" as inv
+participant "inventory-reserved-event" as t_resevt
+
+client -> order : POST /orders
+order -> t_order : OrderCreatedEvent
+t_order -> orch : OrderCreatedEvent
+orch -> t_saga : SagaEvent(PROCESS_PAYMENT)
+t_saga -> pay : SagaEvent
+pay -> t_pay : PaymentCompletedEvent
+t_pay -> orch : PaymentCompletedEvent
+orch -> t_rescmd : ReserveInventoryCommand
+t_rescmd -> inv : ReserveInventoryCommand
+inv -> t_resevt : InventoryReservedEvent
+t_resevt -> orch : InventoryReservedEvent
+orch -> t_saga : SagaEvent(SAGA_COMPLETED)
+
+@enduml

@@ -1,5 +1,7 @@
 package com.example.sagaorchestrator.service;
 
+import com.example.sagaorchestrator.dto.InventoryReservedEvent;
+import com.example.sagaorchestrator.dto.ReserveInventoryCommand;
 import com.example.sagaorchestrator.entity.SagaInstance;
 import com.example.sagaorchestrator.entity.SagaStatus;
 import com.example.sagaorchestrator.entity.SagaStep;
@@ -15,6 +17,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.Optional;
+import java.util.UUID;
 
 
 @Service
@@ -47,7 +51,7 @@ public class SagaOrchestratorService {
                 .payload(toJson(event))
                 .build();
 
-        saga = sagaRepository.save(saga);
+        saga = sagaRepository.save(saga); // мб тут не нужно сохр т к entityManager сам сохранит
         log.info(" Сага создана: id={}", saga.getId());
 
         // Переходим к шагу PAYMENT_PROCESSING
@@ -59,6 +63,8 @@ public class SagaOrchestratorService {
         sagaEventProducer.sendSagaEvent(SagaEvent.builder()
                 .sagaId(saga.getId())
                 .orderId(saga.getOrderId())
+                .customerId(saga.getCustomerId())
+                .amount(event.getAmount())
                 .step(SagaStep.PAYMENT_PROCESSING.name())
                 .status("COMMAND")
                 .eventType("PROCESS_PAYMENT")
@@ -66,31 +72,41 @@ public class SagaOrchestratorService {
                 .build());
     }
 
-    /**
-     * Шаг 2: Получен PaymentCompletedEvent → двигаемся дальше
-     */
     @Transactional
     public void onPaymentCompleted(PaymentCompletedEvent event) {
-        log.info(" Получен PaymentCompletedEvent: orderId={}", event.getOrderId());
+        log.info("Получен PaymentCompletedEvent: orderId={}", event.getOrderId());
 
-        SagaInstance saga = sagaRepository.findByOrderId(event.getOrderId())
-                .orElseThrow(() -> new RuntimeException(
-                        "Сага для заказа " + event.getOrderId() + " не найдена"));
+        Optional<SagaInstance> maybeSaga = sagaRepository.findByOrderId(event.getOrderId());
+        if (maybeSaga.isEmpty()) {
+            log.warn("Сага для заказа {} не найдена, событие игнорируется", event.getOrderId());
+            return;
+        }
+        SagaInstance saga = maybeSaga.get();
 
-        // Проверяем, что мы на правильном шаге
         if (saga.getCurrentStep() != SagaStep.PAYMENT_PROCESSING) {
-            log.warn(" Сага на шаге {}, ожидался PAYMENT_PROCESSING",
-                    saga.getCurrentStep());
+            log.warn("Сага на шаге {}, ожидался PAYMENT_PROCESSING", saga.getCurrentStep());
             return;
         }
 
-        // Обновляем шаг
-        saga.setCurrentStep(SagaStep.PAYMENT_COMPLETED);
+        saga.setCurrentStep(SagaStep.INVENTORY_PROCESSING);
         saga.setStatus(SagaStatus.IN_PROGRESS);
+        sagaRepository.save(saga);
 
-        // Здесь можно добавить следующий шаг, например INVENTORY_RESERVING
-        // Пока просто завершаем сагу
-        completeSaga(saga);
+        OrderCreatedEvent orderEvent = parseOrderCreated(saga);
+
+        ReserveInventoryCommand command = ReserveInventoryCommand.builder()
+                .sagaId(String.valueOf(saga.getId()))
+                .orderId(String.valueOf(saga.getOrderId()))
+                .items(orderEvent.getItems().stream()
+                        .map(i -> ReserveInventoryCommand.Item.builder()
+                                .productId(i.getProductId())
+                                .quantity(i.getQuantity())
+                                .build())
+                        .toList())
+                .build();
+
+        sagaEventProducer.sendReserveInventoryCommand(command);
+        log.info("Отправлена команда RESERVE_INVENTORY для саги {}", saga.getId());
     }
 
     /**
@@ -108,7 +124,8 @@ public class SagaOrchestratorService {
         // Отправляем событие о завершении саги
         sagaEventProducer.sendSagaEvent(SagaEvent.builder()
                 .sagaId(saga.getId())
-                .orderId(saga.getId())
+                .orderId(saga.getOrderId())
+                .amount(null)
                 .step(SagaStep.COMPLETED.name())
                 .status("COMPLETED")
                 .eventType("SAGA_COMPLETED")
@@ -152,6 +169,38 @@ public class SagaOrchestratorService {
         } catch (Exception e) {
             log.error("Ошибка сериализации в JSON", e);
             return "{}";
+        }
+    }
+
+    @Transactional
+    public void onInventoryReserved(InventoryReservedEvent event) {
+        log.info("Получен InventoryReservedEvent: sagaId={}", event.getSagaId());
+
+        // Ищем сагу по sagaId, а не по orderId — событие приходит с sagaId
+        SagaInstance saga = sagaRepository.findById(UUID.fromString(event.getSagaId()))
+                .orElseThrow(() -> new RuntimeException(
+                        "Сага не найдена: " + event.getSagaId()));
+
+        if (saga.getCurrentStep() != SagaStep.INVENTORY_PROCESSING) {
+            log.warn("Сага на шаге {}, ожидался INVENTORY_PROCESSING",
+                    saga.getCurrentStep());
+            return;
+        }
+
+        saga.setCurrentStep(SagaStep.INVENTORY_COMPLETED);
+        saga.setStatus(SagaStatus.IN_PROGRESS);
+        sagaRepository.save(saga);
+
+        // Все шаги пройдены — завершаем сагу
+        completeSaga(saga);
+    }
+
+    private OrderCreatedEvent parseOrderCreated(SagaInstance saga) {
+        try {
+            return objectMapper.readValue(saga.getPayload(), OrderCreatedEvent.class);
+        } catch (Exception e) {
+            throw new IllegalStateException(
+                    "Не удалось распарсить payload саги " + saga.getId(), e);
         }
     }
 

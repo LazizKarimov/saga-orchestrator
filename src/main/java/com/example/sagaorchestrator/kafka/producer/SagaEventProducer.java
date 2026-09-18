@@ -1,5 +1,6 @@
 package com.example.sagaorchestrator.kafka.producer;
 
+import com.example.sagaorchestrator.dto.ReserveInventoryCommand;
 import com.example.sagaorchestrator.event.SagaEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,5 +25,9 @@ public class SagaEventProducer {
                         log.error(" Ошибка отправки SagaEvent", ex);
                     }
                 });
+    }
+
+    public void sendReserveInventoryCommand(ReserveInventoryCommand command) {
+        kafkaTemplate.send("reserve-inventory-command", command.getSagaId(), command);
     }
 }

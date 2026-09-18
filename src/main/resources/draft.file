@@ -1,0 +1,144 @@
+// последнее обновление 18.09
+Order Service
+    │
+    │ OrderCreated
+    ▼
+Kafka: order-events, partition 0, offset 12
+    │
+    ├──────────────► Payment Service
+    │                    │
+    │                    └─ payment COMPLETED
+    │                         │
+    │                         ▼
+    │                    Kafka: payment-events
+    │                         │
+    ▼                         ▼
+Saga Orchestrator ◄──── PaymentCompleted
+    │
+    └─ Saga → COMPLETED
+
+// последнее обновление 19.09
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                                 POST /orders                                     │
+│                                     │                                            │
+│                                     ▼                                            │
+│  ┌──────────────┐    order-events   ┌──────────────────┐    saga-events          │
+│  │ Order        │──────────────────▶│ Saga             │───────────────────┐     │
+│  │ Service      │                   │ Orchestrator     │                   │     │
+│  │ (Boot 4,     │                   │ (Boot 3)         │                   │     │
+│  │  Jackson 3)  │                   │                  │                   │     │
+│  └──────────────┘                   └──────────────────┘                   │     │
+│        ▲                                    ▲   ▲   ▲                       │     │
+│        │                                    │   │   │                       ▼     │
+│        │                    inventory-reserved  │  payment-events   ┌──────────────┐
+│        │                         ── event ──┘   │   ── event ──┐   │ Payment      │
+│        │                                        │              │   │ Service      │
+│        │                                        │              └──▶│ (Boot 3)     │
+│        │                                        │                  └──────────────┘
+│        │                                        │                        │
+│        │                                        │                        │
+│        │                          reserve-inventory-command               │
+│        │                                        │                        │
+│        │                                        ▼                        │
+│        │                            ┌───────────────────┐                │
+│        │                            │ Inventory         │                │
+│        │                            │ Service           │                │
+│        │                            │ (Boot 4,          │                │
+│        │                            │  Jackson 3)       │                │
+│        │                            └───────────────────┘                │
+│        │                                                                 │
+│        └─────────────────────── (ответ через orchestrator) ◀─────────────┘
+│
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────────────────────────────────────┐
+│ ШАГ 1: Order Service публикует заказ                                           │
+└───────────────────────────────────────────────────────────────────────────────┘
+
+  Клиент ──POST /orders──▶ Order Service
+                              │
+                              ├─ insert orders + order_items (Postgres)
+                              └─ publish OrderCreatedEvent
+                                   → topic: order-events
+                                   key: orderId, value: {items, amount, ...}
+
+┌───────────────────────────────────────────────────────────────────────────────┐
+│ ШАГ 2: Оркестратор запускает сагу                                              │
+└───────────────────────────────────────────────────────────────────────────────┘
+
+  order-events ──▶ Saga Orchestrator.OrderEventConsumer
+                       │ parse JSON → OrderCreatedEvent
+                       ├─ insert saga_instances (STARTED)
+                       ├─ update saga → IN_PROGRESS / PAYMENT_PROCESSING
+                       └─ publish SagaEvent(PROCESS_PAYMENT)
+                            → topic: saga-events
+                            key: sagaId, value: {sagaId, orderId, amount, ...}
+
+┌───────────────────────────────────────────────────────────────────────────────┐
+│ ШАГ 3: Payment Service обрабатывает платёж                                     │
+└───────────────────────────────────────────────────────────────────────────────┘
+
+  saga-events ──▶ Payment.SagaEventConsumer
+                     │ filter: eventType == "PROCESS_PAYMENT"
+                     │ parse JSON → SagaEvent
+                     ├─ insert payment (PENDING)
+                     ├─ gateway (имитация)
+                     ├─ update payment → COMPLETED
+                     └─ publish PaymentCompletedEvent
+                          → topic: payment-events
+                          key: orderId, value: {paymentId, orderId, amount, ...}
+
+┌───────────────────────────────────────────────────────────────────────────────┐
+│ ШАГ 4: Оркестратор переходит к резервированию                                  │
+└───────────────────────────────────────────────────────────────────────────────┘
+
+  payment-events ──▶ Saga Orchestrator.PaymentEventConsumer
+                         │ parse JSON → PaymentCompletedEvent
+                         ├─ find saga by orderId
+                         ├─ update saga → INVENTORY_PROCESSING
+                         └─ publish ReserveInventoryCommand
+                              → topic: reserve-inventory-command
+                              key: sagaId, value: {sagaId, orderId, items}
+
+┌───────────────────────────────────────────────────────────────────────────────┐
+│ ШАГ 5: Inventory Service создаёт резерв                                        │
+└───────────────────────────────────────────────────────────────────────────────┘
+
+  reserve-inventory-command ──▶ Inventory.InventoryCommandListener
+                                    │ idempotency: findBySagaId
+                                    ├─ insert inventory_reservation + items
+                                    └─ publish InventoryReservedEvent
+                                         → topic: inventory-reserved-event
+                                         key: sagaId, value: {sagaId, orderId, reservationId, items}
+
+┌───────────────────────────────────────────────────────────────────────────────┐
+│ ШАГ 6: Оркестратор завершает сагу                                              │
+└───────────────────────────────────────────────────────────────────────────────┘
+
+  inventory-reserved-event ──▶ Saga Orchestrator.InventoryEventConsumer
+                                   │ parse JSON → InventoryReservedEvent
+                                   ├─ find saga by sagaId
+                                   ├─ update saga → INVENTORY_COMPLETED
+                                   └─ completeSaga():
+                                        ├─ update saga → COMPLETED
+                                        └─ publish SagaEvent(SAGA_COMPLETED)
+                                             → topic: saga-events
+
+┌─────────────────────────────┬──────────────┬──────────────────────────┬─────────────────┐
+│ Топик                       │ Producer     │ Consumer                 │ Key             │
+├─────────────────────────────┼──────────────┼──────────────────────────┼─────────────────┤
+│ order-events                │ Order        │ Orchestrator, Payment?   │ orderId         │
+│                             │              │ (только Orchestrator     │                 │
+│                             │              │  после фикса)            │                 │
+├─────────────────────────────┼──────────────┼──────────────────────────┼─────────────────┤
+│ saga-events                 │ Orchestrator │ Payment                  │ sagaId          │
+│                             │              │ (фильтр PROCESS_PAYMENT, │                 │
+│                             │              │  SAGA_COMPLETED игнор)   │                 │
+├─────────────────────────────┼──────────────┼──────────────────────────┼─────────────────┤
+│ payment-events              │ Payment      │ Orchestrator             │ orderId         │
+├─────────────────────────────┼──────────────┼──────────────────────────┼─────────────────┤
+│ reserve-inventory-command   │ Orchestrator │ Inventory                │ sagaId          │
+├─────────────────────────────┼──────────────┼──────────────────────────┼─────────────────┤
+│ inventory-reserved-event    │ Inventory    │ Orchestrator             │ sagaId          │
+└─────────────────────────────┴──────────────┴──────────────────────────┴─────────────────┘

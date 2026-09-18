@@ -1,7 +1,6 @@
 package com.example.sagaorchestrator.event;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -9,6 +8,7 @@ import lombok.NoArgsConstructor;
 
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
 
 @Data
@@ -25,10 +25,16 @@ public class OrderCreatedEvent {
     private String status;
     private String eventType;
     private Long timestamp;
-}
 
-//acks: all
-//retries: 3
-//auto-offset-reset: earliest
-//enable-auto-commit: false
-//        напомни пожалуйста, что за настройки?
+    private List<Item> items;
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Item {
+        private String productId;
+        private int quantity;
+    }
+}
