@@ -1,13 +1,15 @@
 package com.example.sagaorchestrator.service;
 
+import com.example.sagaorchestrator.config.SagaCommandProducer;
 import com.example.sagaorchestrator.dto.InventoryReservedEvent;
+import com.example.sagaorchestrator.dto.ProcessPaymentCommand;
 import com.example.sagaorchestrator.dto.ReserveInventoryCommand;
 import com.example.sagaorchestrator.entity.SagaInstance;
 import com.example.sagaorchestrator.entity.SagaStatus;
 import com.example.sagaorchestrator.entity.SagaStep;
 import com.example.sagaorchestrator.event.OrderCreatedEvent;
 import com.example.sagaorchestrator.event.PaymentCompletedEvent;
-import com.example.sagaorchestrator.event.SagaEvent;
+import com.example.sagaorchestrator.event.SagaCompletedEvent;
 import com.example.sagaorchestrator.kafka.producer.SagaEventProducer;
 import com.example.sagaorchestrator.repository.SagaInstanceRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -16,6 +18,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
@@ -29,6 +32,7 @@ public class SagaOrchestratorService {
     private final SagaInstanceRepository sagaRepository;
     private final SagaEventProducer sagaEventProducer;
     private final ObjectMapper objectMapper;
+    private final SagaCommandProducer sagaCommandProducer;
 
     /**
      * Шаг 1: Получен OrderCreatedEvent → запускаем сагу
@@ -60,25 +64,22 @@ public class SagaOrchestratorService {
         sagaRepository.save(saga);
 
         // Отправляем команду на оплату
-        sagaEventProducer.sendSagaEvent(SagaEvent.builder()
-                .sagaId(saga.getId())
-                .orderId(saga.getOrderId())
-                .customerId(saga.getCustomerId())
-                .amount(event.getAmount())
-                .step(SagaStep.PAYMENT_PROCESSING.name())
-                .status("COMMAND")
-                .eventType("PROCESS_PAYMENT")
-                .timestamp(System.currentTimeMillis())
-                .build());
+        ProcessPaymentCommand command = new ProcessPaymentCommand(
+                saga.getId(),
+                saga.getOrderId(),
+                saga.getCustomerId(),
+                event.getAmount()
+        );
+        sagaCommandProducer.sendProcessPaymentCommand(command);
     }
 
     @Transactional
     public void onPaymentCompleted(PaymentCompletedEvent event) {
-        log.info("Получен PaymentCompletedEvent: orderId={}", event.getOrderId());
+        log.info("Получен PaymentCompletedEvent: sagaId={}", event.sagaId());
 
-        Optional<SagaInstance> maybeSaga = sagaRepository.findByOrderId(event.getOrderId());
+        Optional<SagaInstance> maybeSaga = sagaRepository.findById(event.sagaId());
         if (maybeSaga.isEmpty()) {
-            log.warn("Сага для заказа {} не найдена, событие игнорируется", event.getOrderId());
+            log.warn("Сага {} не найдена, событие игнорируется", event.sagaId());
             return;
         }
         SagaInstance saga = maybeSaga.get();
@@ -105,7 +106,7 @@ public class SagaOrchestratorService {
                         .toList())
                 .build();
 
-        sagaEventProducer.sendReserveInventoryCommand(command);
+        sagaCommandProducer.sendReserveInventoryCommand(command);
         log.info("Отправлена команда RESERVE_INVENTORY для саги {}", saga.getId());
     }
 
@@ -119,18 +120,13 @@ public class SagaOrchestratorService {
         saga.setCompletedAt(LocalDateTime.now());
         sagaRepository.save(saga);
 
-        log.info(" Сага завершена: id={}, orderId={}", saga.getId(), saga.getOrderId());
+        log.info("Сага завершена: id={}, orderId={}", saga.getId(), saga.getOrderId());
 
-        // Отправляем событие о завершении саги
-        sagaEventProducer.sendSagaEvent(SagaEvent.builder()
-                .sagaId(saga.getId())
-                .orderId(saga.getOrderId())
-                .amount(null)
-                .step(SagaStep.COMPLETED.name())
-                .status("COMPLETED")
-                .eventType("SAGA_COMPLETED")
-                .timestamp(System.currentTimeMillis())
-                .build());
+        sagaEventProducer.sendSagaCompletedEvent(new SagaCompletedEvent(
+                saga.getId(),
+                saga.getOrderId(),
+                Instant.now()
+        ));
     }
 
     /**

@@ -1,11 +1,11 @@
-package com.example.sagaorchestrator.event;
+package com.example.sagaorchestrator.dto;
 
 import java.math.BigDecimal;
 import java.util.UUID;
 
-public record PaymentCompletedEvent(
+public record ProcessPaymentCommand(
         UUID sagaId,
-        UUID paymentId,
         UUID orderId,
+        UUID customerId,
         BigDecimal amount
 ) {}

@@ -1,7 +1,6 @@
 package com.example.sagaorchestrator.kafka.producer;
 
-import com.example.sagaorchestrator.dto.ReserveInventoryCommand;
-import com.example.sagaorchestrator.event.SagaEvent;
+import com.example.sagaorchestrator.event.SagaCompletedEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -12,22 +11,19 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class SagaEventProducer {
 
-    private final KafkaTemplate<String, Object> kafkaTemplate;
-    private static final String TOPIC = "saga-events";
+    private static final String SAGA_EVENTS_TOPIC = "saga-events";
 
-    public void sendSagaEvent(SagaEvent event) {
-        kafkaTemplate.send(TOPIC, event)
+    private final KafkaTemplate<String, Object> kafkaTemplate;
+
+    public void sendSagaCompletedEvent(SagaCompletedEvent event) {
+        kafkaTemplate.send(SAGA_EVENTS_TOPIC, event.sagaId().toString(), event)
                 .whenComplete((result, ex) -> {
                     if (ex == null) {
-                        log.info(" SagaEvent отправлен: step={}, status={}",
-                                event.getStep(), event.getStatus());
+                        log.info("SagaCompletedEvent отправлен: sagaId={}", event.sagaId());
                     } else {
-                        log.error(" Ошибка отправки SagaEvent", ex);
+                        log.error("Ошибка отправки SagaCompletedEvent: sagaId={}",
+                                event.sagaId(), ex);
                     }
                 });
-    }
-
-    public void sendReserveInventoryCommand(ReserveInventoryCommand command) {
-        kafkaTemplate.send("reserve-inventory-command", command.getSagaId(), command);
     }
 }
