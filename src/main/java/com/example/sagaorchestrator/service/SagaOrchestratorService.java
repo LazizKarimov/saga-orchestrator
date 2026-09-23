@@ -1,9 +1,7 @@
 package com.example.sagaorchestrator.service;
 
 import com.example.sagaorchestrator.config.SagaCommandProducer;
-import com.example.sagaorchestrator.dto.InventoryReservedEvent;
-import com.example.sagaorchestrator.dto.ProcessPaymentCommand;
-import com.example.sagaorchestrator.dto.ReserveInventoryCommand;
+import com.example.sagaorchestrator.dto.*;
 import com.example.sagaorchestrator.entity.SagaInstance;
 import com.example.sagaorchestrator.entity.SagaStatus;
 import com.example.sagaorchestrator.entity.SagaStep;
@@ -89,6 +87,7 @@ public class SagaOrchestratorService {
             return;
         }
 
+        saga.setPaymentId(event.paymentId());
         saga.setCurrentStep(SagaStep.INVENTORY_PROCESSING);
         saga.setStatus(SagaStatus.IN_PROGRESS);
         sagaRepository.save(saga);
@@ -127,6 +126,32 @@ public class SagaOrchestratorService {
                 saga.getOrderId(),
                 Instant.now()
         ));
+    }
+
+    @Transactional
+    public void onPaymentRefunded(PaymentRefundedEvent event) {
+        log.info("Получен PaymentRefundedEvent: sagaId={}, paymentId={}",
+                event.sagaId(), event.paymentId());
+
+        Optional<SagaInstance> maybeSaga = sagaRepository.findById(event.sagaId());
+        if (maybeSaga.isEmpty()) {
+            log.warn("Сага {} не найдена, событие игнорируется", event.sagaId());
+            return;
+        }
+        SagaInstance saga = maybeSaga.get();
+
+        if (saga.getCurrentStep() != SagaStep.REFUNDING_PAYMENT) {
+            log.warn("Сага на шаге {}, ожидался REFUNDING_PAYMENT, событие игнорируется",
+                    saga.getCurrentStep());
+            return;
+        }
+
+        saga.setCurrentStep(SagaStep.PAYMENT_REFUNDED);
+        sagaRepository.save(saga);
+
+        log.warn("Сага {} — платёж возвращён. Дальше: CancelOrderCommand (подэтап 3).",
+                saga.getId());
+        // TODO (подэтап 3): отправить CancelOrderCommand
     }
 
     /**
@@ -189,6 +214,42 @@ public class SagaOrchestratorService {
 
         // Все шаги пройдены — завершаем сагу
         completeSaga(saga);
+    }
+
+    @Transactional
+    public void onInventoryReservationFailed(InventoryReservationFailedEvent event) {
+        log.warn("Получен InventoryReservationFailedEvent: sagaId={}, reason={}",
+                event.sagaId(), event.errorMessage());
+
+        Optional<SagaInstance> maybeSaga = sagaRepository.findById(event.sagaId());
+        if (maybeSaga.isEmpty()) {
+            log.warn("Сага {} не найдена, событие игнорируется", event.sagaId());
+            return;
+        }
+        SagaInstance saga = maybeSaga.get();
+
+        if (saga.getCurrentStep() != SagaStep.INVENTORY_PROCESSING) {
+            log.warn("Сага на шаге {}, ожидался INVENTORY_PROCESSING, событие игнорируется",
+                    saga.getCurrentStep());
+            return;
+        }
+
+        saga.setCurrentStep(SagaStep.REFUNDING_PAYMENT);
+        saga.setStatus(SagaStatus.COMPENSATING);
+        saga.setErrorMessage(event.errorMessage());
+        sagaRepository.save(saga);
+
+        RefundPaymentCommand command = new RefundPaymentCommand(
+                saga.getId(),
+                saga.getOrderId(),
+                saga.getPaymentId(),
+                null,
+                event.errorMessage()
+        );
+        sagaCommandProducer.sendRefundPaymentCommand(command);
+
+        log.warn("Сага {} переведена в REFUNDING_PAYMENT, отправлен RefundPaymentCommand",
+                saga.getId());
     }
 
     private OrderCreatedEvent parseOrderCreated(SagaInstance saga) {

@@ -27,6 +27,9 @@ public class SagaInstance {
     @Column(name = "customer_id", nullable = false)
     private UUID customerId;
 
+    @Column(name = "payment_id")
+    private UUID paymentId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
     private SagaStatus status;

@@ -1,6 +1,7 @@
 package com.example.sagaorchestrator.config;
 
 import com.example.sagaorchestrator.dto.ProcessPaymentCommand;
+import com.example.sagaorchestrator.dto.RefundPaymentCommand;
 import com.example.sagaorchestrator.dto.ReserveInventoryCommand;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,6 +15,7 @@ public class SagaCommandProducer {
 
     private static final String PAYMENT_COMMANDS_TOPIC = "payment-commands";
     private static final String RESERVE_INVENTORY_TOPIC = "reserve-inventory-command";
+    private static final String PAYMENT_REFUND_COMMANDS_TOPIC = "payment-refund-commands";
 
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
@@ -39,6 +41,19 @@ public class SagaCommandProducer {
                     } else {
                         log.error("Ошибка отправки ReserveInventoryCommand: sagaId={}",
                                 command.getSagaId(), ex);
+                    }
+                });
+    }
+
+    public void sendRefundPaymentCommand(RefundPaymentCommand command) {
+        kafkaTemplate.send(PAYMENT_REFUND_COMMANDS_TOPIC, command.sagaId().toString(), command)
+                .whenComplete((result, ex) -> {
+                    if (ex == null) {
+                        log.info("RefundPaymentCommand отправлен: sagaId={}, paymentId={}",
+                                command.sagaId(), command.paymentId());
+                    } else {
+                        log.error("Ошибка отправки RefundPaymentCommand: sagaId={}",
+                                command.sagaId(), ex);
                     }
                 });
     }
