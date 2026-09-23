@@ -1,5 +1,6 @@
 package com.example.sagaorchestrator.config;
 
+import com.example.sagaorchestrator.dto.CancelOrderCommand;
 import com.example.sagaorchestrator.dto.ProcessPaymentCommand;
 import com.example.sagaorchestrator.dto.RefundPaymentCommand;
 import com.example.sagaorchestrator.dto.ReserveInventoryCommand;
@@ -16,6 +17,7 @@ public class SagaCommandProducer {
     private static final String PAYMENT_COMMANDS_TOPIC = "payment-commands";
     private static final String RESERVE_INVENTORY_TOPIC = "reserve-inventory-command";
     private static final String PAYMENT_REFUND_COMMANDS_TOPIC = "payment-refund-commands";
+    private static final String ORDER_COMMANDS_TOPIC = "order-commands";
 
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
@@ -53,6 +55,18 @@ public class SagaCommandProducer {
                                 command.sagaId(), command.paymentId());
                     } else {
                         log.error("Ошибка отправки RefundPaymentCommand: sagaId={}",
+                                command.sagaId(), ex);
+                    }
+                });
+    }
+    public void sendCancelOrderCommand(CancelOrderCommand command) {
+        kafkaTemplate.send(ORDER_COMMANDS_TOPIC, command.sagaId().toString(), command)
+                .whenComplete((result, ex) -> {
+                    if (ex == null) {
+                        log.info("CancelOrderCommand отправлен: sagaId={}, orderId={}",
+                                command.sagaId(), command.orderId());
+                    } else {
+                        log.error("Ошибка отправки CancelOrderCommand: sagaId={}",
                                 command.sagaId(), ex);
                     }
                 });

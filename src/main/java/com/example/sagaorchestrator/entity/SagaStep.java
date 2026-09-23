@@ -1,16 +1,16 @@
 package com.example.sagaorchestrator.entity;
 
 public enum SagaStep {
-    ORDER_CREATED,         // Заказ создан
-    PAYMENT_PROCESSING,    // Ожидание платежа
-    PAYMENT_COMPLETED,     // Платёж успешен
+    ORDER_CREATED,
+    PAYMENT_PROCESSING,
+    PAYMENT_COMPLETED,
     INVENTORY_PROCESSING,
-    INVENTORY_RESERVING,   // Резервирование товара
-    INVENTORY_RESERVED,    // Товар зарезервирован
     INVENTORY_COMPLETED,
     INVENTORY_FAILED,
-    SHIPPING_STARTED,      // Доставка начата
     REFUNDING_PAYMENT,
     PAYMENT_REFUNDED,
-    COMPLETED              // Сага завершена
+    CANCELLING_ORDER,
+    ORDER_CANCELLED,
+    SHIPPING_STARTED,
+    COMPLETED
 }

@@ -5,6 +5,7 @@ import com.example.sagaorchestrator.dto.*;
 import com.example.sagaorchestrator.entity.SagaInstance;
 import com.example.sagaorchestrator.entity.SagaStatus;
 import com.example.sagaorchestrator.entity.SagaStep;
+import com.example.sagaorchestrator.event.OrderCancelledEvent;
 import com.example.sagaorchestrator.event.OrderCreatedEvent;
 import com.example.sagaorchestrator.event.PaymentCompletedEvent;
 import com.example.sagaorchestrator.event.SagaCompletedEvent;
@@ -146,12 +147,19 @@ public class SagaOrchestratorService {
             return;
         }
 
-        saga.setCurrentStep(SagaStep.PAYMENT_REFUNDED);
+        saga.setCurrentStep(SagaStep.CANCELLING_ORDER);
+        saga.setStatus(SagaStatus.COMPENSATING);
         sagaRepository.save(saga);
 
-        log.warn("Сага {} — платёж возвращён. Дальше: CancelOrderCommand (подэтап 3).",
+        CancelOrderCommand command = new CancelOrderCommand(
+                saga.getId(),
+                saga.getOrderId(),
+                saga.getErrorMessage()
+        );
+        sagaCommandProducer.sendCancelOrderCommand(command);
+
+        log.info("Сага {} переведена в CANCELLING_ORDER, отправлен CancelOrderCommand",
                 saga.getId());
-        // TODO (подэтап 3): отправить CancelOrderCommand
     }
 
     /**
@@ -182,6 +190,32 @@ public class SagaOrchestratorService {
         sagaRepository.save(saga);
 
         log.info(" Сага компенсирована: id={}", saga.getId());
+    }
+
+    @Transactional
+    public void onOrderCancelled(OrderCancelledEvent event) {
+        log.info("Получен OrderCancelledEvent: sagaId={}, orderId={}",
+                event.sagaId(), event.orderId());
+
+        Optional<SagaInstance> maybeSaga = sagaRepository.findById(event.sagaId());
+        if (maybeSaga.isEmpty()) {
+            log.warn("Сага {} не найдена, событие игнорируется", event.sagaId());
+            return;
+        }
+        SagaInstance saga = maybeSaga.get();
+
+        if (saga.getCurrentStep() != SagaStep.CANCELLING_ORDER) {
+            log.warn("Сага на шаге {}, ожидался CANCELLING_ORDER, событие игнорируется",
+                    saga.getCurrentStep());
+            return;
+        }
+
+        saga.setCurrentStep(SagaStep.ORDER_CANCELLED);
+        sagaRepository.save(saga);
+
+        log.info("Сага {} — заказ отменён. Дальше: финализация компенсации (подэтап 4).",
+                saga.getId());
+        // TODO (подэтап 4): saga.setStatus(COMPENSATED); publish SagaCompensatedEvent
     }
 
     private String toJson(Object obj) {
