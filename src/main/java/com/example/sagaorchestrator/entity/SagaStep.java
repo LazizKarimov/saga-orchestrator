@@ -12,5 +12,6 @@ public enum SagaStep {
     CANCELLING_ORDER,
     ORDER_CANCELLED,
     SHIPPING_STARTED,
+    COMPENSATED,
     COMPLETED
 }

@@ -5,10 +5,7 @@ import com.example.sagaorchestrator.dto.*;
 import com.example.sagaorchestrator.entity.SagaInstance;
 import com.example.sagaorchestrator.entity.SagaStatus;
 import com.example.sagaorchestrator.entity.SagaStep;
-import com.example.sagaorchestrator.event.OrderCancelledEvent;
-import com.example.sagaorchestrator.event.OrderCreatedEvent;
-import com.example.sagaorchestrator.event.PaymentCompletedEvent;
-import com.example.sagaorchestrator.event.SagaCompletedEvent;
+import com.example.sagaorchestrator.event.*;
 import com.example.sagaorchestrator.kafka.producer.SagaEventProducer;
 import com.example.sagaorchestrator.repository.SagaInstanceRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -210,12 +207,21 @@ public class SagaOrchestratorService {
             return;
         }
 
-        saga.setCurrentStep(SagaStep.ORDER_CANCELLED);
+        // Финализация компенсации
+        saga.setStatus(SagaStatus.COMPENSATED);
+        saga.setCurrentStep(SagaStep.COMPENSATED);
+        saga.setCompletedAt(LocalDateTime.now());
         sagaRepository.save(saga);
 
-        log.info("Сага {} — заказ отменён. Дальше: финализация компенсации (подэтап 4).",
-                saga.getId());
-        // TODO (подэтап 4): saga.setStatus(COMPENSATED); publish SagaCompensatedEvent
+        log.info("Сага {} компенсирована: orderId={}, reason={}",
+                saga.getId(), saga.getOrderId(), saga.getErrorMessage());
+
+        sagaEventProducer.sendSagaCompensatedEvent(new SagaCompensatedEvent(
+                saga.getId(),
+                saga.getOrderId(),
+                saga.getErrorMessage(),
+                Instant.now()
+        ));
     }
 
     private String toJson(Object obj) {
