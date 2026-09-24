@@ -6,6 +6,7 @@ import com.example.sagaorchestrator.entity.SagaInstance;
 import com.example.sagaorchestrator.entity.SagaStatus;
 import com.example.sagaorchestrator.entity.SagaStep;
 import com.example.sagaorchestrator.event.*;
+import com.example.sagaorchestrator.kafka.producer.OutboxEventPublisher;
 import com.example.sagaorchestrator.kafka.producer.SagaEventProducer;
 import com.example.sagaorchestrator.repository.SagaInstanceRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -29,6 +30,7 @@ public class SagaOrchestratorService {
     private final SagaEventProducer sagaEventProducer;
     private final ObjectMapper objectMapper;
     private final SagaCommandProducer sagaCommandProducer;
+    private final OutboxEventPublisher outboxEventPublisher;
 
     /**
      * Шаг 1: Получен OrderCreatedEvent → запускаем сагу
@@ -51,7 +53,7 @@ public class SagaOrchestratorService {
                 .payload(toJson(event))
                 .build();
 
-        saga = sagaRepository.save(saga); // мб тут не нужно сохр т к entityManager сам сохранит
+        saga = sagaRepository.save(saga);
         log.info(" Сага создана: id={}", saga.getId());
 
         // Переходим к шагу PAYMENT_PROCESSING
@@ -59,14 +61,19 @@ public class SagaOrchestratorService {
         saga.setCurrentStep(SagaStep.PAYMENT_PROCESSING);
         sagaRepository.save(saga);
 
-        // Отправляем команду на оплату
+        // Отправляем команду на оплату — через outbox
         ProcessPaymentCommand command = new ProcessPaymentCommand(
                 saga.getId(),
                 saga.getOrderId(),
                 saga.getCustomerId(),
                 event.getAmount()
         );
-        sagaCommandProducer.sendProcessPaymentCommand(command);
+        outboxEventPublisher.enqueue(
+                saga.getId().toString(),
+                "ProcessPaymentCommand",
+                "payment-commands",
+                command
+        );
     }
 
     @Transactional
@@ -103,7 +110,12 @@ public class SagaOrchestratorService {
                         .toList())
                 .build();
 
-        sagaCommandProducer.sendReserveInventoryCommand(command);
+        outboxEventPublisher.enqueue(
+                saga.getId().toString(),
+                "ReserveInventoryCommand",
+                "reserve-inventory-command",
+                command
+        );
         log.info("Отправлена команда RESERVE_INVENTORY для саги {}", saga.getId());
     }
 
@@ -119,11 +131,17 @@ public class SagaOrchestratorService {
 
         log.info("Сага завершена: id={}, orderId={}", saga.getId(), saga.getOrderId());
 
-        sagaEventProducer.sendSagaCompletedEvent(new SagaCompletedEvent(
+        SagaCompletedEvent completed = new SagaCompletedEvent(
                 saga.getId(),
                 saga.getOrderId(),
                 Instant.now()
-        ));
+        );
+        outboxEventPublisher.enqueue(
+                saga.getId().toString(),
+                "SagaCompletedEvent",
+                "saga-events",
+                completed
+        );
     }
 
     @Transactional
@@ -153,7 +171,12 @@ public class SagaOrchestratorService {
                 saga.getOrderId(),
                 saga.getErrorMessage()
         );
-        sagaCommandProducer.sendCancelOrderCommand(command);
+        outboxEventPublisher.enqueue(
+                saga.getId().toString(),
+                "CancelOrderCommand",
+                "order-commands",
+                command
+        );
 
         log.info("Сага {} переведена в CANCELLING_ORDER, отправлен CancelOrderCommand",
                 saga.getId());
@@ -170,14 +193,11 @@ public class SagaOrchestratorService {
         saga.setErrorMessage(errorMessage);
         sagaRepository.save(saga);
 
-        // Логика компенсаций (зависит от текущего шага)
         switch (saga.getCurrentStep()) {
             case PAYMENT_PROCESSING -> {
-                // Платёж не прошёл — просто отменяем заказ
                 log.info(" Компенсация: отмена заказа {}", saga.getOrderId());
             }
             case PAYMENT_COMPLETED -> {
-                // Платёж прошёл, но что-то упало — возвращаем деньги
                 log.info(" Компенсация: возврат средств для заказа {}", saga.getOrderId());
             }
             default -> log.info(" Компенсация: общий откат для шага {}", saga.getCurrentStep());
@@ -216,12 +236,18 @@ public class SagaOrchestratorService {
         log.info("Сага {} компенсирована: orderId={}, reason={}",
                 saga.getId(), saga.getOrderId(), saga.getErrorMessage());
 
-        sagaEventProducer.sendSagaCompensatedEvent(new SagaCompensatedEvent(
+        SagaCompensatedEvent compensated = new SagaCompensatedEvent(
                 saga.getId(),
                 saga.getOrderId(),
                 saga.getErrorMessage(),
                 Instant.now()
-        ));
+        );
+        outboxEventPublisher.enqueue(
+                saga.getId().toString(),
+                "SagaCompensatedEvent",
+                "saga-events",
+                compensated
+        );
     }
 
     private String toJson(Object obj) {
@@ -237,7 +263,6 @@ public class SagaOrchestratorService {
     public void onInventoryReserved(InventoryReservedEvent event) {
         log.info("Получен InventoryReservedEvent: sagaId={}", event.getSagaId());
 
-        // Ищем сагу по sagaId, а не по orderId — событие приходит с sagaId
         SagaInstance saga = sagaRepository.findById(UUID.fromString(event.getSagaId()))
                 .orElseThrow(() -> new RuntimeException(
                         "Сага не найдена: " + event.getSagaId()));
@@ -252,7 +277,6 @@ public class SagaOrchestratorService {
         saga.setStatus(SagaStatus.IN_PROGRESS);
         sagaRepository.save(saga);
 
-        // Все шаги пройдены — завершаем сагу
         completeSaga(saga);
     }
 
@@ -286,7 +310,12 @@ public class SagaOrchestratorService {
                 null,
                 event.errorMessage()
         );
-        sagaCommandProducer.sendRefundPaymentCommand(command);
+        outboxEventPublisher.enqueue(
+                saga.getId().toString(),
+                "RefundPaymentCommand",
+                "payment-refund-commands",
+                command
+        );
 
         log.warn("Сага {} переведена в REFUNDING_PAYMENT, отправлен RefundPaymentCommand",
                 saga.getId());
@@ -300,6 +329,4 @@ public class SagaOrchestratorService {
                     "Не удалось распарсить payload саги " + saga.getId(), e);
         }
     }
-
-
 }

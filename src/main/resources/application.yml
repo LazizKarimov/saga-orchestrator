@@ -43,3 +43,8 @@ logging:
   level:
     org.apache.kafka: WARN
     com.example.sagaorchestrator: DEBUG
+
+outbox:
+  poll:
+    interval-ms: 2000   # как часто опрашивать таблицу
+    batch-size: 100     # сколько записей забирать за один цикл
