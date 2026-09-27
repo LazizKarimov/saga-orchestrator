@@ -6,7 +6,6 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
@@ -18,8 +17,9 @@ import java.util.UUID;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class OrderCreatedEvent {
 
-    private UUID id;
+    private UUID eventId;
 
+    private UUID id;
     private UUID customerId;
     private BigDecimal amount;
     private String status;

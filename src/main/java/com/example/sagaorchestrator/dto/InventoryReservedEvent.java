@@ -6,12 +6,14 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.util.List;
+import java.util.UUID;
 
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class InventoryReservedEvent {
+    private UUID eventId;
     private String sagaId;
     private String orderId;
     private String reservationId;

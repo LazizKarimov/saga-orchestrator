@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 public record PaymentRefundedEvent(
+        UUID eventId,
         UUID sagaId,
         UUID paymentId,
         UUID orderId,

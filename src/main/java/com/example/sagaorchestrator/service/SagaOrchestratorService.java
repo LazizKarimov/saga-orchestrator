@@ -27,10 +27,9 @@ import java.util.UUID;
 public class SagaOrchestratorService {
 
     private final SagaInstanceRepository sagaRepository;
-    private final SagaEventProducer sagaEventProducer;
     private final ObjectMapper objectMapper;
-    private final SagaCommandProducer sagaCommandProducer;
     private final OutboxEventPublisher outboxEventPublisher;
+    private final IdempotencyService idempotencyService;
 
     /**
      * Шаг 1: Получен OrderCreatedEvent → запускаем сагу
@@ -38,6 +37,9 @@ public class SagaOrchestratorService {
     @Transactional
     public void startSaga(OrderCreatedEvent event) {
         log.info(" Запуск саги для заказа: {}", event.getId());
+
+        if (!idempotencyService.tryMarkProcessed(
+                event.getEventId(), "saga-orchestrator", "OrderCreatedEvent")) return;
 
         // Идемпотентность
         if (sagaRepository.existsByOrderId(event.getId())) {
@@ -79,6 +81,9 @@ public class SagaOrchestratorService {
     @Transactional
     public void onPaymentCompleted(PaymentCompletedEvent event) {
         log.info("Получен PaymentCompletedEvent: sagaId={}", event.sagaId());
+
+        if (!idempotencyService.tryMarkProcessed(
+                event.eventId(), "saga-orchestrator", "PaymentCompletedEvent")) return;
 
         Optional<SagaInstance> maybeSaga = sagaRepository.findById(event.sagaId());
         if (maybeSaga.isEmpty()) {
@@ -149,6 +154,9 @@ public class SagaOrchestratorService {
         log.info("Получен PaymentRefundedEvent: sagaId={}, paymentId={}",
                 event.sagaId(), event.paymentId());
 
+        if (!idempotencyService.tryMarkProcessed(
+                event.eventId(), "saga-orchestrator", "PaymentRefundedEvent")) return;
+
         Optional<SagaInstance> maybeSaga = sagaRepository.findById(event.sagaId());
         if (maybeSaga.isEmpty()) {
             log.warn("Сага {} не найдена, событие игнорируется", event.sagaId());
@@ -214,6 +222,9 @@ public class SagaOrchestratorService {
         log.info("Получен OrderCancelledEvent: sagaId={}, orderId={}",
                 event.sagaId(), event.orderId());
 
+        if (!idempotencyService.tryMarkProcessed(
+                event.eventId(), "saga-orchestrator", "OrderCancelledEvent")) return;
+
         Optional<SagaInstance> maybeSaga = sagaRepository.findById(event.sagaId());
         if (maybeSaga.isEmpty()) {
             log.warn("Сага {} не найдена, событие игнорируется", event.sagaId());
@@ -263,6 +274,9 @@ public class SagaOrchestratorService {
     public void onInventoryReserved(InventoryReservedEvent event) {
         log.info("Получен InventoryReservedEvent: sagaId={}", event.getSagaId());
 
+        if (!idempotencyService.tryMarkProcessed(
+                event.getEventId(), "saga-orchestrator", "InventoryReservedEvent")) return;
+
         SagaInstance saga = sagaRepository.findById(UUID.fromString(event.getSagaId()))
                 .orElseThrow(() -> new RuntimeException(
                         "Сага не найдена: " + event.getSagaId()));
@@ -284,6 +298,9 @@ public class SagaOrchestratorService {
     public void onInventoryReservationFailed(InventoryReservationFailedEvent event) {
         log.warn("Получен InventoryReservationFailedEvent: sagaId={}, reason={}",
                 event.sagaId(), event.errorMessage());
+
+        if (!idempotencyService.tryMarkProcessed(
+                event.eventId(), "saga-orchestrator", "InventoryReservationFailedEvent")) return;
 
         Optional<SagaInstance> maybeSaga = sagaRepository.findById(event.sagaId());
         if (maybeSaga.isEmpty()) {
