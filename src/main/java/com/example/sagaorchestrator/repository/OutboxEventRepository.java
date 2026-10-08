@@ -20,4 +20,11 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> 
             """, nativeQuery = true)
     List<OutboxEvent> findReadyToSend(@Param("maxAttempts") int maxAttempts,
                                       @Param("batchSize") int batchSize);
+
+    @Query(value = """
+            SELECT * FROM outbox_events
+            WHERE processed_at IS NULL AND attempts >= :maxAttempts
+            """, nativeQuery = true)
+    List<OutboxEvent> findExhausted(@Param("maxAttempts") int maxAttempts);
+
 }

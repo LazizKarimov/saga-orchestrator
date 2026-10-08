@@ -2,6 +2,7 @@ package com.example.sagaorchestrator.kafka.producer;
 
 import com.example.sagaorchestrator.entity.OutboxEvent;
 import com.example.sagaorchestrator.repository.OutboxEventRepository;
+import com.example.sagaorchestrator.service.OutboxDlqService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +23,7 @@ public class OutboxPoller {
     private final OutboxEventRepository outboxRepository;
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final ObjectMapper objectMapper;
+    private final OutboxDlqService outboxDlqService;
 
     @Value("${outbox.poll.batch-size:100}")
     private int batchSize;
@@ -69,6 +71,11 @@ public class OutboxPoller {
                 }
             }
         }
+    }
+
+    @Scheduled(fixedDelayString = "${outbox.dlq.move-interval-ms:300000}")
+    public void moveExhausted() {
+        outboxDlqService.moveExhaustedToDlq();
     }
 
     /**

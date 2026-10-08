@@ -47,6 +47,8 @@ logging:
     org.hibernate.orm.jdbc.bind: WARN
 
 outbox:
+  dlq:
+    move-interval-ms: 300000
   poll:
     interval-ms: 2000
     batch-size: 100
