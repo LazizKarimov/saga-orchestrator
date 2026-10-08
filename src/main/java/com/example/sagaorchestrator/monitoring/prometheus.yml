@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'saga-orchestrator'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      # host.docker.internal — чтобы Prometheus (в контейнере) видел
+      # твой оркестратор на хосте (localhost:8082)
+      - targets: ['host.docker.internal:8082']
+        labels:
+          application: 'saga-orchestrator'

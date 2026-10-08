@@ -27,4 +27,7 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> 
             """, nativeQuery = true)
     List<OutboxEvent> findExhausted(@Param("maxAttempts") int maxAttempts);
 
+    @Query("SELECT COUNT(e) FROM OutboxEvent e WHERE e.processedAt IS NULL")
+    long countByProcessedAtIsNull();
+
 }

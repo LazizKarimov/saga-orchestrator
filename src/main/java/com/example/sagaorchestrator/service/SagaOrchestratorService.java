@@ -8,6 +8,7 @@ import com.example.sagaorchestrator.entity.SagaStep;
 import com.example.sagaorchestrator.event.*;
 import com.example.sagaorchestrator.kafka.producer.OutboxEventPublisher;
 import com.example.sagaorchestrator.kafka.producer.SagaEventProducer;
+import com.example.sagaorchestrator.metrics.SagaMetrics;
 import com.example.sagaorchestrator.repository.SagaInstanceRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -30,6 +31,7 @@ public class SagaOrchestratorService {
     private final ObjectMapper objectMapper;
     private final OutboxEventPublisher outboxEventPublisher;
     private final IdempotencyService idempotencyService;
+    private final SagaMetrics sagaMetrics;
 
     /**
      * Шаг 1: Получен OrderCreatedEvent → запускаем сагу
@@ -62,6 +64,7 @@ public class SagaOrchestratorService {
         saga.setStatus(SagaStatus.IN_PROGRESS);
         saga.setCurrentStep(SagaStep.PAYMENT_PROCESSING);
         sagaRepository.save(saga);
+        sagaMetrics.recordSagaStarted();
 
         // Отправляем команду на оплату — через outbox
         ProcessPaymentCommand command = new ProcessPaymentCommand(
@@ -135,6 +138,7 @@ public class SagaOrchestratorService {
         sagaRepository.save(saga);
 
         log.info("Сага завершена: id={}, orderId={}", saga.getId(), saga.getOrderId());
+        sagaMetrics.recordSagaCompleted();
 
         SagaCompletedEvent completed = new SagaCompletedEvent(
                 saga.getId(),
@@ -259,6 +263,7 @@ public class SagaOrchestratorService {
                 "saga-events",
                 compensated
         );
+        sagaMetrics.recordSagaCompensated();
     }
 
     private String toJson(Object obj) {

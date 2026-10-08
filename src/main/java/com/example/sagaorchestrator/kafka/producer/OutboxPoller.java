@@ -1,6 +1,7 @@
 package com.example.sagaorchestrator.kafka.producer;
 
 import com.example.sagaorchestrator.entity.OutboxEvent;
+import com.example.sagaorchestrator.metrics.SagaMetrics;
 import com.example.sagaorchestrator.repository.OutboxEventRepository;
 import com.example.sagaorchestrator.service.OutboxDlqService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,6 +25,7 @@ public class OutboxPoller {
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final ObjectMapper objectMapper;
     private final OutboxDlqService outboxDlqService;
+    private final SagaMetrics sagaMetrics;
 
     @Value("${outbox.poll.batch-size:100}")
     private int batchSize;
@@ -48,10 +50,12 @@ public class OutboxPoller {
                 kafkaTemplate.send(event.getTopic(), event.getAggregateId(), payload).get();
 
                 event.setProcessedAt(LocalDateTime.now());
+                sagaMetrics.recordOutboxSent();
                 event.setLastError(null);
                 log.info("Outbox → Kafka: type={}, aggregateId={}, topic={}",
                         event.getEventType(), event.getAggregateId(), event.getTopic());
             } catch (Exception e) {
+                sagaMetrics.recordOutboxFailed();
                 int newAttempts = event.getAttempts() + 1;
                 event.setAttempts(newAttempts);
                 event.setLastError(truncate(e.getMessage(), 2000));
