@@ -32,6 +32,7 @@ public class OutboxEventPublisher {
                     .topic(topic)
                     .payload(json)
                     .createdAt(LocalDateTime.now())
+                    .attempts(0)
                     .build();
             outboxRepository.save(event);
         } catch (JsonProcessingException e) {

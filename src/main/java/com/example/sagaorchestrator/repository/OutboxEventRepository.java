@@ -13,8 +13,11 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> 
     @Query(value = """
             SELECT * FROM outbox_events
             WHERE processed_at IS NULL
+              AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+              AND attempts < :maxAttempts
             ORDER BY created_at
             LIMIT :batchSize
             """, nativeQuery = true)
-    List<OutboxEvent> findUnprocessedBatch(@Param("batchSize") int batchSize);
+    List<OutboxEvent> findReadyToSend(@Param("maxAttempts") int maxAttempts,
+                                      @Param("batchSize") int batchSize);
 }

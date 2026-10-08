@@ -43,8 +43,12 @@ logging:
   level:
     org.apache.kafka: WARN
     com.example.sagaorchestrator: DEBUG
+    org.hibernate.SQL: WARN
+    org.hibernate.orm.jdbc.bind: WARN
 
 outbox:
   poll:
-    interval-ms: 2000   # как часто опрашивать таблицу
-    batch-size: 100     # сколько записей забирать за один цикл
+    interval-ms: 2000
+    batch-size: 100
+    max-attempts: 5
+    base-backoff-ms: 2000
